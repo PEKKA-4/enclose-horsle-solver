@@ -82,6 +82,15 @@ class SolverTests(unittest.TestCase):
         self.assertEqual(progress[-1], (result.explored_states, result.wall_set_upper_bound))
         self.assertTrue(result.valid_solution)
 
+    def test_best_callback_receives_improvements_during_search(self) -> None:
+        board = parse_board("#####\n#...#\n#.H.#\n#C..#\n##.##")
+        improvements = []
+        result = solve(board, 1, best_callback=improvements.append)
+        self.assertGreaterEqual(len(improvements), 1)
+        self.assertEqual(improvements[-1].best_score, result.best_score)
+        self.assertEqual(improvements[-1].wall_coordinates, result.wall_coordinates)
+        self.assertTrue(all(item.valid_solution for item in improvements))
+
 
 if __name__ == "__main__":
     unittest.main()

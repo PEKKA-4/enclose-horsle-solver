@@ -64,10 +64,13 @@ placement. Both pruning rules preserve exactness.
 
 `SolveResult.explored_states` counts distinct wall placements actually
 analyzed. `SolveResult.wall_set_upper_bound` is the total number of possible
-grass-wall combinations up to the budget. The progress callback passed to
-`solve(board, max_walls, callback)` receives those two search counts. Their
-difference is an upper bound on placements not analyzed, not a count of work
-still required: branch-and-bound may prove those placements unnecessary.
+grass-wall combinations up to the budget. The optional progress callback
+passed to `solve(board, max_walls, progress_callback)` receives those two
+search counts. An optional `best_callback` receives each improved valid
+`SolveResult` immediately, which the desktop app uses to update the board
+preview while the search continues. The difference between the upper bound
+and analyzed placements is not a count of work still required:
+branch-and-bound may prove those placements unnecessary.
 
 For `V` board cells and `E` movement edges, one BFS costs `O(V + E)`. With
 `G` candidate grass cells and budget `N`, the worst case remains exponential:

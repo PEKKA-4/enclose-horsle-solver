@@ -200,11 +200,13 @@ def solve(
     board: Board,
     max_walls: int,
     progress_callback: Callable[[int, int], None] | None = None,
+    best_callback: Callable[[SolveResult], None] | None = None,
 ) -> SolveResult:
     """Find an exact maximum-score enclosure using at most ``max_walls``.
 
     Coordinates in the result are zero-based ``(row, column)`` pairs.
     The optional callback receives (checked_states, wall_set_upper_bound).
+    ``best_callback`` receives each improved valid result as soon as it is found.
     """
     if isinstance(max_walls, bool) or not isinstance(max_walls, int) or max_walls < 0:
         raise ValueError("max_walls must be a non-negative integer.")
@@ -292,6 +294,23 @@ def solve(
 
     best: tuple[int, int, tuple[int, ...], tuple[int, int, int]] | None = None
 
+    def result_from_best(
+        current_best: tuple[int, int, tuple[int, ...], tuple[int, int, int]],
+        explored: int,
+    ) -> SolveResult:
+        score, area, wall_indices, collected = current_best
+        return SolveResult(
+            score,
+            tuple(board.coordinate(index) for index in wall_indices),
+            area,
+            collected[0],
+            collected[1],
+            collected[2],
+            True,
+            explored,
+            wall_set_upper_bound,
+        )
+
     def search(wall_mask: int) -> None:
         nonlocal best, states_checked
         if wall_mask in visited_states:
@@ -329,6 +348,8 @@ def solve(
                     index for index in range(len(board.cells)) if wall_mask & (1 << index)
                 )
                 best = (score, area, wall_indices, (cherries, apples, bees))
+                if best_callback is not None:
+                    best_callback(result_from_best(best, states_checked))
 
             if walls_used == max_walls:
                 return
@@ -352,16 +373,4 @@ def solve(
     if best is None:
         return SolveResult(0, (), 0, 0, 0, 0, False, states_checked, wall_set_upper_bound)
 
-    score, area, wall_indices, collected = best
-    coordinates = tuple(board.coordinate(index) for index in wall_indices)
-    return SolveResult(
-        score,
-        coordinates,
-        area,
-        collected[0],
-        collected[1],
-        collected[2],
-        True,
-        states_checked,
-        wall_set_upper_bound,
-    )
+    return result_from_best(best, states_checked)

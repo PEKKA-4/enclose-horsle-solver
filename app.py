@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import threading
 import tkinter as tk
-from queue import Empty, SimpleQueue
+from queue import Empty, Full, Queue, SimpleQueue
 from tkinter import messagebox, ttk
 
 from enclose_horse import Board, Cell, SolveResult, solve
@@ -67,15 +67,18 @@ class EncloseHorseApp:
         self.cells[(self.height // 2) * self.width + self.width // 2] = Cell.HORSE
         self.selected_cell = Cell.WALL
         self.solution: SolveResult | None = None
+        self.best_so_far: SolveResult | None = None
         self.board_revision = 0
         self.is_solving = False
         self.progress_queue: SimpleQueue[tuple[int, int, int]] = SimpleQueue()
+        self.best_queue: Queue[tuple[int, SolveResult]] = Queue(maxsize=1)
         self.palette_buttons: dict[Cell, tk.Button] = {}
 
         self.width_var = tk.StringVar(value=str(self.width))
         self.height_var = tk.StringVar(value=str(self.height))
         self.wall_budget_var = tk.StringVar(value="4")
         self.status_var = tk.StringVar(value="Select a tile, then click the board to paint.")
+        self.board_best_var = tk.StringVar(value="Best solution found during search will appear here.")
         self.result_var = tk.StringVar(value="No solution computed yet.")
         self.result_details_var = tk.StringVar(value="")
         self.wall_list_var = tk.StringVar(value="")
@@ -202,6 +205,16 @@ class EncloseHorseApp:
         heading.pack(fill="x", pady=(3, 10))
         tk.Label(heading, text="PUZZLE BOARD", bg=BACKGROUND, fg=TEXT, font=("Segoe UI Semibold", 11)).pack(side="left")
         tk.Label(heading, text="CLICK TO PAINT", bg=BACKGROUND, fg=MUTED, font=("Segoe UI Semibold", 8)).pack(side="right")
+        tk.Label(
+            panel,
+            textvariable=self.board_best_var,
+            bg=PANEL,
+            fg=ACCENT,
+            anchor="w",
+            padx=12,
+            pady=8,
+            font=("Segoe UI Semibold", 10),
+        ).pack(fill="x", pady=(0, 8))
 
         board_frame = tk.Frame(panel, bg="#0c1310", padx=2, pady=2)
         board_frame.pack(fill="both", expand=True)
@@ -285,6 +298,8 @@ class EncloseHorseApp:
     def _board_changed(self) -> None:
         self.board_revision += 1
         self.solution = None
+        self.best_so_far = None
+        self.board_best_var.set("Best solution found during search will appear here.")
         self.apply_button.configure(state="disabled")
         self.result_var.set("No solution computed yet.")
         self.result_details_var.set("")
@@ -309,7 +324,7 @@ class EncloseHorseApp:
                 outline="#25342c",
                 width=2,
             )
-            if self.solution and (row, column) in self.solution.wall_coordinates:
+            if self.best_so_far and (row, column) in self.best_so_far.wall_coordinates:
                 self.canvas.create_rectangle(
                     x0 + 7,
                     y0 + 7,
@@ -390,13 +405,28 @@ class EncloseHorseApp:
         self.result_var.set("Searching...")
         self.result_details_var.set("Waiting for search progress.")
         self.wall_list_var.set("")
+        self.solution = None
+        self.best_so_far = None
+        self.board_best_var.set("Searching for the first valid enclosure...")
+        self._draw_board()
 
         def report_progress(checked: int, total: int) -> None:
             self.progress_queue.put((revision, checked, total))
 
+        def report_best(result: SolveResult) -> None:
+            update = (revision, result)
+            try:
+                self.best_queue.put_nowait(update)
+            except Full:
+                try:
+                    self.best_queue.get_nowait()
+                except Empty:
+                    pass
+                self.best_queue.put_nowait(update)
+
         def worker() -> None:
             try:
-                result = solve(board, wall_budget, report_progress)
+                result = solve(board, wall_budget, report_progress, report_best)
                 self.root.after(0, self._finish_solving, revision, result, None)
             except Exception as error:
                 self.root.after(0, self._finish_solving, revision, None, error)
@@ -423,6 +453,25 @@ class EncloseHorseApp:
                     "Remaining count is an upper bound; pruning skips combinations."
                 )
 
+        newest_best: tuple[int, SolveResult] | None = None
+        while True:
+            try:
+                newest_best = self.best_queue.get_nowait()
+            except Empty:
+                break
+
+        if newest_best is not None:
+            revision, result = newest_best
+            if revision == self.board_revision and self.is_solving:
+                self.best_so_far = result
+                self.board_best_var.set(
+                    f"Best so far  |  Score {result.best_score}  |  "
+                    f"{len(result.wall_coordinates)} walls  |  Area {result.enclosed_area}"
+                )
+                wall_lines = [f"({row}, {column})" for row, column in result.wall_coordinates]
+                self.wall_list_var.set("Best walls so far\n" + (", ".join(wall_lines) if wall_lines else "None needed"))
+                self._draw_board()
+
         self.root.after(100, self._poll_solver_progress)
 
     def _finish_solving(
@@ -444,9 +493,11 @@ class EncloseHorseApp:
         if result is None:
             return
 
-        self.solution = result
-        self._draw_board()
+        self.solution = result if result.valid_solution else None
+        self.best_so_far = result if result.valid_solution else None
         if not result.valid_solution:
+            self.board_best_var.set("No valid enclosure found.")
+            self._draw_board()
             self.result_var.set("No valid enclosure")
             unexamined = max(result.wall_set_upper_bound - result.explored_states, 0)
             self.result_details_var.set(
@@ -459,6 +510,11 @@ class EncloseHorseApp:
             self.status_var.set("No valid solution found for this wall budget.")
             return
 
+        self.board_best_var.set(
+            f"Best solution  |  Score {result.best_score}  |  "
+            f"{len(result.wall_coordinates)} walls  |  Area {result.enclosed_area}"
+        )
+        self._draw_board()
         self.result_var.set(f"Best score   {result.best_score}")
         self.result_details_var.set(
             f"Enclosed tiles     {result.enclosed_area}\n"
