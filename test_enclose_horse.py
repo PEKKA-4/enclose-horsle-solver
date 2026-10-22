@@ -66,6 +66,20 @@ class SolverTests(unittest.TestCase):
         self.assertEqual(result.best_score, 4)
         self.assertEqual(result.wall_coordinates, ((2, 3),))
         self.assertEqual(result.trapped_bees, 0)
+        self.assertLess(result.explored_states, result.wall_set_upper_bound)
+
+    def test_does_not_try_extra_walls_when_enclosure_has_no_bees(self) -> None:
+        board = parse_board("#######\n#.....#\n#.....#\n#..H..#\n#.....#\n#.....#\n#######")
+        result = solve(board, 4)
+        self.assertTrue(result.valid_solution)
+        self.assertEqual(result.explored_states, 1)
+
+    def test_progress_callback_reports_checked_and_upper_bound(self) -> None:
+        board = parse_board("#####\n#H..#\n#...#\n#####")
+        progress: list[tuple[int, int]] = []
+        result = solve(board, 0, lambda checked, total: progress.append((checked, total)))
+        self.assertEqual(progress[0], (0, result.wall_set_upper_bound))
+        self.assertEqual(progress[-1], (result.explored_states, result.wall_set_upper_bound))
         self.assertTrue(result.valid_solution)
 
 

@@ -15,7 +15,10 @@ Place two portal tiles to create a pair, set the maximum wall count, and select
 **Run solver**. Suggested walls are outlined on the board; **Apply suggested
 walls** places them into the level. Board dimensions can be resized from 3 to
 30 tiles in each direction. The solver runs in a background thread so the
-editor remains responsive while searching.
+editor remains responsive while searching. During the search, the results
+panel shows evaluated placements and an upper bound on combinations not yet
+evaluated. The bound includes combinations that pruning may skip entirely, so
+it is not an exact countdown.
 
 ```python
 from enclose_horse import parse_board, solve
@@ -48,20 +51,30 @@ and enclosure counts are zero. Equal scores prefer fewer placed walls.
 
 ## Search and Complexity
 
-The solver runs BFS on the board graph for each distinct wall set. If the
-horse can escape, any valid completion must block at least one grass cell on
-the discovered escape path, so the search branches only on those cells. Once
-enclosed, it explores reachable grass placements as well, since a wall can
-separate a bee from the horse and improve the score. A positive-reward upper
-bound ignores bee penalties and assumes all currently reachable grass and
-fruit remain reachable; adding walls cannot increase reachability, so the
-bound is safe. Wall-set analyses and duplicate search states are memoized.
+The solver runs BFS on the board graph for each distinct wall placement. If
+the horse can escape, any valid completion must block at least one grass cell
+on the discovered escape path, so the search branches only on those cells.
+Once enclosed, a score improvement requires isolating at least one bee. The
+search therefore branches only on grass cells along BFS paths to reachable
+bees, not every reachable grass tile. States with identical reachable regions
+and wall counts are memoized. Its score upper bound assumes all reachable
+positive-value tiles remain reachable and subtracts bees that have a route
+containing no wallable grass; those bees cannot be isolated by any wall
+placement. Both pruning rules preserve exactness.
+
+`SolveResult.explored_states` counts distinct wall placements actually
+analyzed. `SolveResult.wall_set_upper_bound` is the total number of possible
+grass-wall combinations up to the budget. The progress callback passed to
+`solve(board, max_walls, callback)` receives those two search counts. Their
+difference is an upper bound on placements not analyzed, not a count of work
+still required: branch-and-bound may prove those placements unnecessary.
 
 For `V` board cells and `E` movement edges, one BFS costs `O(V + E)`. With
 `G` candidate grass cells and budget `N`, the worst case remains exponential:
 `O((V + E) * sum(C(G, k), k=0..N))` time and `O(V * S)` space in the worst
-case, where `S` is the number of distinct wall sets visited. Branching on
-escape paths and score bounds usually prunes much of that space, but the exact
-optimization problem has no general polynomial-time guarantee.
+case, where `S` is the number of distinct search states. Escape-path and
+bee-path branching, region memoization, and score bounds often avoid much of
+that upper-bound search space, but the exact optimization problem has no
+general polynomial-time guarantee.
 
 Run the tests with `python -m unittest -v`.

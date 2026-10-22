@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import threading
 import tkinter as tk
+from queue import Empty, SimpleQueue
 from tkinter import messagebox, ttk
 
 from enclose_horse import Board, Cell, SolveResult, solve
@@ -68,6 +69,7 @@ class EncloseHorseApp:
         self.solution: SolveResult | None = None
         self.board_revision = 0
         self.is_solving = False
+        self.progress_queue: SimpleQueue[tuple[int, int, int]] = SimpleQueue()
         self.palette_buttons: dict[Cell, tk.Button] = {}
 
         self.width_var = tk.StringVar(value=str(self.width))
@@ -82,6 +84,7 @@ class EncloseHorseApp:
         self._build_layout()
         self._draw_board()
         self._select_palette_cell(Cell.WALL)
+        self.root.after(100, self._poll_solver_progress)
 
     def _configure_styles(self) -> None:
         style = ttk.Style(self.root)
@@ -384,15 +387,43 @@ class EncloseHorseApp:
         self.solve_button.configure(state="disabled", text="Solving...")
         self.wall_budget_control.configure(state="disabled")
         self.status_var.set("Searching wall placements. The editor will remain responsive.")
+        self.result_var.set("Searching...")
+        self.result_details_var.set("Waiting for search progress.")
+        self.wall_list_var.set("")
+
+        def report_progress(checked: int, total: int) -> None:
+            self.progress_queue.put((revision, checked, total))
 
         def worker() -> None:
             try:
-                result = solve(board, wall_budget)
+                result = solve(board, wall_budget, report_progress)
                 self.root.after(0, self._finish_solving, revision, result, None)
             except Exception as error:
                 self.root.after(0, self._finish_solving, revision, None, error)
 
         threading.Thread(target=worker, name="enclose-horse-solver", daemon=True).start()
+
+    def _poll_solver_progress(self) -> None:
+        latest: tuple[int, int, int] | None = None
+        while True:
+            try:
+                latest = self.progress_queue.get_nowait()
+            except Empty:
+                break
+
+        if latest is not None:
+            revision, checked, total = latest
+            if revision == self.board_revision and self.is_solving:
+                remaining = max(total - checked, 0)
+                self.result_var.set("Searching...")
+                self.result_details_var.set(
+                    f"Wall placements checked: {checked:,}\n"
+                    f"Possible combinations: ≤ {total:,}\n"
+                    f"Not yet examined: ≤ {remaining:,}\n\n"
+                    "Remaining count is an upper bound; pruning skips combinations."
+                )
+
+        self.root.after(100, self._poll_solver_progress)
 
     def _finish_solving(
         self,
@@ -417,7 +448,12 @@ class EncloseHorseApp:
         self._draw_board()
         if not result.valid_solution:
             self.result_var.set("No valid enclosure")
-            self.result_details_var.set(f"No wall placement within this budget can block every route to the border.\n\nStates checked: {result.explored_states:,}")
+            unexamined = max(result.wall_set_upper_bound - result.explored_states, 0)
+            self.result_details_var.set(
+                "No wall placement within this budget can block every route to the border.\n\n"
+                f"Placements checked: {result.explored_states:,}\n"
+                f"Not examined (upper bound): ≤ {unexamined:,}"
+            )
             self.wall_list_var.set("")
             self.apply_button.configure(state="disabled")
             self.status_var.set("No valid solution found for this wall budget.")
@@ -430,7 +466,9 @@ class EncloseHorseApp:
             f"Golden apples      {result.collected_apples}\n"
             f"Trapped bees       {result.trapped_bees}\n"
             f"Walls used         {len(result.wall_coordinates)}\n"
-            f"States checked     {result.explored_states:,}"
+            f"Placements checked {result.explored_states:,}\n"
+            f"Possible sets      ≤ {result.wall_set_upper_bound:,}\n"
+            f"Not examined       ≤ {max(result.wall_set_upper_bound - result.explored_states, 0):,}"
         )
         wall_lines = [f"({row}, {column})" for row, column in result.wall_coordinates]
         self.wall_list_var.set("Suggested walls\n" + (", ".join(wall_lines) if wall_lines else "None needed"))

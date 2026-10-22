@@ -5,7 +5,8 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass
 from enum import Enum
-from typing import Iterable, Sequence
+from math import comb
+from typing import Callable, Iterable, Sequence
 
 
 class Cell(str, Enum):
@@ -57,12 +58,14 @@ class SolveResult:
     trapped_bees: int
     valid_solution: bool
     explored_states: int
+    wall_set_upper_bound: int
 
 
 @dataclass(frozen=True, slots=True)
 class _Analysis:
     reachable: tuple[int, ...]
     escape_path: tuple[int, ...] | None
+    bee_wall_candidates: tuple[int, ...]
 
 
 _TOKENS: dict[str, Cell] = {
@@ -193,23 +196,45 @@ def _score(board: Board, reachable: Iterable[int]) -> tuple[int, int, int, int, 
     return grass + 3 * cherries + 10 * apples - 5 * bees, area, cherries, apples, bees
 
 
-def solve(board: Board, max_walls: int) -> SolveResult:
+def solve(
+    board: Board,
+    max_walls: int,
+    progress_callback: Callable[[int, int], None] | None = None,
+) -> SolveResult:
     """Find an exact maximum-score enclosure using at most ``max_walls``.
 
     Coordinates in the result are zero-based ``(row, column)`` pairs.
+    The optional callback receives (checked_states, wall_set_upper_bound).
     """
     if isinstance(max_walls, bool) or not isinstance(max_walls, int) or max_walls < 0:
         raise ValueError("max_walls must be a non-negative integer.")
 
     graph = _build_graph(board)
-    analysis_cache: dict[int, _Analysis] = {}
+    grass_count = sum(cell is Cell.GRASS for cell in board.cells)
+    wall_set_upper_bound = sum(
+        comb(grass_count, wall_count)
+        for wall_count in range(min(max_walls, grass_count) + 1)
+    )
+    if progress_callback is not None:
+        progress_callback(0, wall_set_upper_bound)
+
     visited_states: set[int] = set()
+    evaluated_regions: set[tuple[int, int]] = set()
+    states_checked = 0
+
+    wall_free_reachable = {board.horse_index}
+    wall_free_queue = deque([board.horse_index])
+    while wall_free_queue:
+        current = wall_free_queue.popleft()
+        for neighbor in graph[current]:
+            if board.cells[neighbor] in (Cell.WATER, Cell.WALL, Cell.GRASS):
+                continue
+            if neighbor not in wall_free_reachable:
+                wall_free_reachable.add(neighbor)
+                wall_free_queue.append(neighbor)
+    unavoidable_bees = sum(board.cells[index] is Cell.BEE for index in wall_free_reachable)
 
     def analyze(wall_mask: int) -> _Analysis:
-        cached = analysis_cache.get(wall_mask)
-        if cached is not None:
-            return cached
-
         start = board.horse_index
         parent = [-2] * len(board.cells)
         parent[start] = -1
@@ -240,9 +265,18 @@ def solve(board: Board, max_walls: int) -> SolveResult:
                 current = parent[current]
             escape_path = tuple(reversed(path))
 
-        result = _Analysis(tuple(reachable), escape_path)
-        analysis_cache[wall_mask] = result
-        return result
+        bee_wall_candidates: set[int] = set()
+        if first_border is None:
+            for bee_index in reachable:
+                if board.cells[bee_index] is not Cell.BEE:
+                    continue
+                current = bee_index
+                while current != -1:
+                    if board.cells[current] is Cell.GRASS:
+                        bee_wall_candidates.add(current)
+                    current = parent[current]
+
+        return _Analysis(tuple(reachable), escape_path, tuple(sorted(bee_wall_candidates)))
 
     def optimistic_score(reachable: Iterable[int]) -> int:
         upper_bound = 0
@@ -254,12 +288,12 @@ def solve(board: Board, max_walls: int) -> SolveResult:
                 upper_bound += 3
             elif cell is Cell.GOLDEN_APPLE:
                 upper_bound += 10
-        return upper_bound
+        return upper_bound - 5 * unavoidable_bees
 
     best: tuple[int, int, tuple[int, ...], tuple[int, int, int]] | None = None
 
     def search(wall_mask: int) -> None:
-        nonlocal best
+        nonlocal best, states_checked
         if wall_mask in visited_states:
             return
         visited_states.add(wall_mask)
@@ -268,7 +302,19 @@ def solve(board: Board, max_walls: int) -> SolveResult:
         if walls_used > max_walls:
             return
 
+        states_checked += 1
+        if progress_callback is not None and states_checked % 128 == 0:
+            progress_callback(states_checked, wall_set_upper_bound)
+
         analysis = analyze(wall_mask)
+        reachable_mask = 0
+        for index in analysis.reachable:
+            reachable_mask |= 1 << index
+        region_key = (reachable_mask, walls_used)
+        if region_key in evaluated_regions:
+            return
+        evaluated_regions.add(region_key)
+
         upper_bound = optimistic_score(analysis.reachable)
         if best is not None and (
             upper_bound < best[0]
@@ -286,11 +332,7 @@ def solve(board: Board, max_walls: int) -> SolveResult:
 
             if walls_used == max_walls:
                 return
-            candidates = [
-                index
-                for index in analysis.reachable
-                if board.cells[index] is Cell.GRASS and not wall_mask & (1 << index)
-            ]
+            candidates = analysis.bee_wall_candidates
         else:
             if walls_used == max_walls:
                 return
@@ -304,9 +346,11 @@ def solve(board: Board, max_walls: int) -> SolveResult:
             search(wall_mask | (1 << index))
 
     search(0)
+    if progress_callback is not None:
+        progress_callback(states_checked, wall_set_upper_bound)
 
     if best is None:
-        return SolveResult(0, (), 0, 0, 0, 0, False, len(visited_states))
+        return SolveResult(0, (), 0, 0, 0, 0, False, states_checked, wall_set_upper_bound)
 
     score, area, wall_indices, collected = best
     coordinates = tuple(board.coordinate(index) for index in wall_indices)
@@ -318,5 +362,6 @@ def solve(board: Board, max_walls: int) -> SolveResult:
         collected[1],
         collected[2],
         True,
-        len(visited_states),
+        states_checked,
+        wall_set_upper_bound,
     )
