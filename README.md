@@ -2,6 +2,21 @@
 
 An exact, dependency-free Python solver for Enclose.Horse boards.
 
+## Desktop App
+
+Launch the level editor from this folder:
+
+```powershell
+python app.py
+```
+
+Choose a tile from the palette, then click or drag over the board to paint it.
+Place two portal tiles to create a pair, set the maximum wall count, and select
+**Run solver**. Suggested walls are outlined on the board; **Apply suggested
+walls** places them into the level. Board dimensions can be resized from 3 to
+30 tiles in each direction. The solver runs in a background thread so the
+editor remains responsive while searching.
+
 ```python
 from enclose_horse import parse_board, solve
 
