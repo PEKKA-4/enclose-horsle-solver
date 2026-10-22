@@ -65,7 +65,7 @@ class SolveResult:
 class _Analysis:
     reachable: tuple[int, ...]
     escape_path: tuple[int, ...] | None
-    bee_wall_candidates: tuple[int, ...]
+    wall_candidates: tuple[int, ...]
 
 
 _TOKENS: dict[str, Cell] = {
@@ -152,6 +152,33 @@ def parse_board(source: str | Sequence[str] | Sequence[Sequence[str]]) -> Board:
     return Board(width, len(rows), tuple(cells), tuple(portal_pairs))
 
 
+def format_board(board: Board) -> str:
+    """Serialize a board as whitespace-separated rows accepted by ``parse_board``."""
+    tokens = {
+        Cell.GRASS: ".",
+        Cell.WATER: "~",
+        Cell.HORSE: "H",
+        Cell.CHERRY: "C",
+        Cell.GOLDEN_APPLE: "A",
+        Cell.BEE: "B",
+        Cell.WALL: "#",
+    }
+    portal_labels = {
+        index: f"P:portal{pair_number}"
+        for pair_number, pair in enumerate(board.portal_pairs)
+        for index in pair
+    }
+    rows = []
+    for row in range(board.height):
+        start = row * board.width
+        row_tokens = [
+            portal_labels[index] if board.cells[index] is Cell.PORTAL else tokens[board.cells[index]]
+            for index in range(start, start + board.width)
+        ]
+        rows.append(" ".join(row_tokens))
+    return "\n".join(rows)
+
+
 def _build_graph(board: Board) -> tuple[tuple[int, ...], ...]:
     neighbors: list[set[int]] = [set() for _ in board.cells]
     portal_mates = {
@@ -180,11 +207,25 @@ def _is_border(board: Board, index: int) -> bool:
     return row == 0 or column == 0 or row == board.height - 1 or column == board.width - 1
 
 
+def _tile_score(cell: Cell) -> int:
+    if cell is Cell.GRASS:
+        return 1
+    if cell is Cell.CHERRY:
+        return 3
+    if cell is Cell.GOLDEN_APPLE:
+        return 10
+    if cell is Cell.BEE:
+        return -5
+    return 0
+
+
 def _score(board: Board, reachable: Iterable[int]) -> tuple[int, int, int, int, int]:
     grass = cherries = apples = bees = area = 0
+    score = 0
     for index in reachable:
         area += 1
         cell = board.cells[index]
+        score += _tile_score(cell)
         if cell is Cell.GRASS:
             grass += 1
         elif cell is Cell.CHERRY:
@@ -193,7 +234,7 @@ def _score(board: Board, reachable: Iterable[int]) -> tuple[int, int, int, int, 
             apples += 1
         elif cell is Cell.BEE:
             bees += 1
-    return grass + 3 * cherries + 10 * apples - 5 * bees, area, cherries, apples, bees
+    return score, area, cherries, apples, bees
 
 
 def solve(
@@ -267,7 +308,7 @@ def solve(
                 current = parent[current]
             escape_path = tuple(reversed(path))
 
-        bee_wall_candidates: set[int] = set()
+        wall_candidates: set[int] = set()
         if first_border is None:
             for bee_index in reachable:
                 if board.cells[bee_index] is not Cell.BEE:
@@ -275,10 +316,24 @@ def solve(
                 current = bee_index
                 while current != -1:
                     if board.cells[current] is Cell.GRASS:
-                        bee_wall_candidates.add(current)
+                        wall_candidates.add(current)
                     current = parent[current]
+        elif escape_path is not None:
+            wall_candidates.update(
+                index for index in escape_path if board.cells[index] is Cell.GRASS
+            )
 
-        return _Analysis(tuple(reachable), escape_path, tuple(sorted(bee_wall_candidates)))
+        subtree_scores = [0] * len(board.cells)
+        for index in reversed(reachable):
+            subtree_scores[index] += _tile_score(board.cells[index])
+            parent_index = parent[index]
+            if parent_index != -1:
+                subtree_scores[parent_index] += subtree_scores[index]
+
+        ordered_candidates = tuple(
+            sorted(wall_candidates, key=lambda index: (subtree_scores[index], index))
+        )
+        return _Analysis(tuple(reachable), escape_path, ordered_candidates)
 
     def optimistic_score(reachable: Iterable[int]) -> int:
         upper_bound = 0
@@ -353,15 +408,11 @@ def solve(
 
             if walls_used == max_walls:
                 return
-            candidates = analysis.bee_wall_candidates
+            candidates = analysis.wall_candidates
         else:
             if walls_used == max_walls:
                 return
-            candidates = [
-                index
-                for index in analysis.escape_path
-                if board.cells[index] is Cell.GRASS and not wall_mask & (1 << index)
-            ]
+            candidates = analysis.wall_candidates
 
         for index in candidates:
             search(wall_mask | (1 << index))

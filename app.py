@@ -7,7 +7,7 @@ import tkinter as tk
 from queue import Empty, Full, Queue, SimpleQueue
 from tkinter import messagebox, ttk
 
-from enclose_horse import Board, Cell, SolveResult, solve
+from enclose_horse import Board, Cell, SolveResult, format_board, parse_board, solve
 
 
 CELL_SIZE = 54
@@ -181,6 +181,15 @@ class EncloseHorseApp:
         self._labeled_entry(dimensions, "Rows", self.height_var).pack(side="left", expand=True, fill="x")
         ttk.Button(panel, text="Resize board", command=self._resize_board).pack(fill="x", pady=(1, 8))
         ttk.Button(panel, text="Reset level", command=self._reset_board).pack(fill="x")
+
+        tk.Frame(panel, bg="#334139", height=1).pack(fill="x", pady=14)
+        tk.Label(panel, text="BOARD TEXT", bg=PANEL, fg=ACCENT, font=("Segoe UI Semibold", 10)).pack(anchor="w")
+        ttk.Button(panel, text="Copy board", command=self._copy_board).pack(fill="x", pady=(8, 4))
+        ttk.Button(
+            panel,
+            text="Load board from clipboard",
+            command=self._load_board_from_clipboard,
+        ).pack(fill="x")
 
         tk.Label(
             panel,
@@ -377,6 +386,37 @@ class EncloseHorseApp:
         self.cells[(self.height // 2) * self.width + self.width // 2] = Cell.HORSE
         self._board_changed()
         self.status_var.set("Level reset. Paint tiles to rebuild your puzzle.")
+
+    def _copy_board(self) -> None:
+        try:
+            board_text = format_board(self._make_board())
+            self.root.clipboard_clear()
+            self.root.clipboard_append(board_text)
+        except (tk.TclError, ValueError) as error:
+            messagebox.showerror("Cannot copy board", str(error), parent=self.root)
+            return
+        self.status_var.set("Board copied to the clipboard as text.")
+
+    def _load_board_from_clipboard(self) -> None:
+        try:
+            board = parse_board(self.root.clipboard_get())
+            if not MIN_BOARD_SIZE <= board.width <= MAX_BOARD_SIZE:
+                raise ValueError(f"Board width must be from {MIN_BOARD_SIZE} to {MAX_BOARD_SIZE}.")
+            if not MIN_BOARD_SIZE <= board.height <= MAX_BOARD_SIZE:
+                raise ValueError(f"Board height must be from {MIN_BOARD_SIZE} to {MAX_BOARD_SIZE}.")
+            if len(board.portal_pairs) > 1:
+                raise ValueError("The editor supports at most one portal pair.")
+        except (tk.TclError, ValueError) as error:
+            messagebox.showerror("Cannot load board", str(error), parent=self.root)
+            return
+
+        self.width = board.width
+        self.height = board.height
+        self.cells = list(board.cells)
+        self.width_var.set(str(self.width))
+        self.height_var.set(str(self.height))
+        self._board_changed()
+        self.status_var.set("Board loaded from the clipboard.")
 
     def _make_board(self) -> Board:
         portal_indices = [index for index, cell in enumerate(self.cells) if cell is Cell.PORTAL]

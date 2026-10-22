@@ -1,6 +1,6 @@
 import unittest
 
-from enclose_horse import Cell, parse_board, solve
+from enclose_horse import Cell, format_board, parse_board, solve
 
 
 class ParseBoardTests(unittest.TestCase):
@@ -16,6 +16,15 @@ class ParseBoardTests(unittest.TestCase):
         result = solve(board, 0)
         self.assertTrue(result.valid_solution)
         self.assertEqual(result.enclosed_area, 2)
+
+    def test_formatted_board_can_be_parsed_back_without_losing_tiles_or_portals(self) -> None:
+        board = parse_board(
+            "# # # # # #\n"
+            "# H P:gate C # #\n"
+            "# ~ A B P:gate #\n"
+            "# # # # # #"
+        )
+        self.assertEqual(parse_board(format_board(board)), board)
 
     def test_entering_a_portal_does_not_allow_leaving_its_entry_endpoint(self) -> None:
         board = parse_board("#######\n#HP.###\n#######\n#######\n#######\n#####P#\n#######")

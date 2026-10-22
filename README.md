@@ -19,6 +19,16 @@ editor remains responsive while searching. During the search, the results
 panel shows evaluated placements and an upper bound on combinations not yet
 evaluated. The bound includes combinations that pruning may skip entirely, so
 it is not an exact countdown.
+Use **Copy board** to put the current level in the clipboard as readable text,
+or **Load board from clipboard** to restore a board from that format. The
+serialized rows include every tile and portal pair.
+
+```text
+# # # # #
+# H P:portal0 C #
+# ~ A B P:portal0 #
+# # # # #
+```
 
 ```python
 from enclose_horse import parse_board, solve
@@ -56,8 +66,12 @@ the horse can escape, any valid completion must block at least one grass cell
 on the discovered escape path, so the search branches only on those cells.
 Once enclosed, a score improvement requires isolating at least one bee. The
 search therefore branches only on grass cells along BFS paths to reachable
-bees, not every reachable grass tile. States with identical reachable regions
-and wall counts are memoized. Its score upper bound assumes all reachable
+bees, not every reachable grass tile. Candidate walls are ordered by an
+estimated score impact from their BFS-tree subregion, so branches likely to
+preserve or improve the score are explored first. This estimate only changes
+search order: no candidate is discarded based on its estimated value.
+States with identical reachable regions and wall counts are memoized. Its
+score upper bound assumes all reachable
 positive-value tiles remain reachable and subtracts bees that have a route
 containing no wallable grass; those bees cannot be isolated by any wall
 placement. Both pruning rules preserve exactness.
